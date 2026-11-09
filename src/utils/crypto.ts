@@ -1,4 +1,13 @@
+import { customAlphabet } from 'nanoid';
 import type { PkceCodes } from '../types';
+
+// RFC 7636 Section 4.1 unreserved characters: [A-Z] / [a-z] / [0-9] / "-" / "." / "_" / "~"
+const PKCE_CHARSET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+const generateSecureString = customAlphabet(PKCE_CHARSET);
+
+export function generateRandomString(length: number = 43): string {
+  return generateSecureString(length);
+}
 
 function bufferToBase64Url(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -10,18 +19,6 @@ function bufferToBase64Url(buffer: ArrayBuffer): string {
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/, '');
-}
-
-export function generateRandomString(length: number = 43): string {
-  const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
-  const randomValues = new Uint8Array(length);
-  crypto.getRandomValues(randomValues);
-
-  let result = '';
-  for (let i = 0; i < length; i++) {
-    result += charset[randomValues[i] % charset.length];
-  }
-  return result;
 }
 
 async function generateCodeChallenge(verifier: string): Promise<string> {

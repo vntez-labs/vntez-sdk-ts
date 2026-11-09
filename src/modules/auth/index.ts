@@ -22,7 +22,7 @@ export class AuthModule {
   private readonly KEY_USER = 'vntez_user_profile';
 
   constructor(private readonly config: VntezClientConfig = {}) {
-    this.clientId = config.clientId || config.id || '';
+    this.clientId = config.clientId || '';
     this.clientSecret = config.clientSecret || config.secret;
     this.gatewayUrl = (config.gatewayUrl || 'https://iam.hnamhocit.workers.dev').replace(/\/+$/, '');
     this.storage = config.storage || new DefaultBrowserStorage();

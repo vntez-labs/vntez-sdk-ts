@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { R2Module, createR2Client } from '../src/modules/r2';
+import { R2Module, createR2Client, inferMimeType } from '../src/modules/r2';
 
 describe('R2Module', () => {
   let r2: R2Module;
@@ -131,5 +131,35 @@ describe('R2Module', () => {
       'https://upload.test.dev/api/upload/download-url?key=private%2Freport.pdf&expiresIn=600',
       expect.objectContaining({ method: 'GET' })
     );
+  });
+
+  it('should infer accurate MIME types using mime library across multiple extensions and edge cases', () => {
+    // Microsoft Office
+    expect(inferMimeType(null, 'report.docx')).toBe(
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    );
+    expect(inferMimeType(null, 'sheet.xlsx')).toBe(
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    expect(inferMimeType(null, 'presentation.pptx')).toBe(
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+    );
+
+    // Modern Image & Media formats
+    expect(inferMimeType(null, 'banner.avif')).toBe('image/avif');
+    expect(inferMimeType(null, 'picture.webp')).toBe('image/webp');
+    expect(inferMimeType(null, 'audio.mp3')).toBe('audio/mpeg');
+    expect(inferMimeType(null, 'video.mov')).toBe('video/quicktime');
+
+    // Compressed & Documents
+    expect(inferMimeType(null, 'archive.tar.gz')).toBe('application/gzip');
+    expect(inferMimeType(null, 'archive.7z')).toBe('application/x-7z-compressed');
+    expect(inferMimeType(null, 'font.woff2')).toBe('font/woff2');
+
+    // Explicit type on File/Blob has priority
+    expect(inferMimeType({ type: 'application/x-custom' }, 'file.png')).toBe('application/x-custom');
+
+    // Unknown fallback
+    expect(inferMimeType(null, 'file.unknownext999')).toBe('application/octet-stream');
   });
 });

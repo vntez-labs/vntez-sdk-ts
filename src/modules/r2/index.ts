@@ -1,3 +1,5 @@
+import pLimit from 'p-limit';
+import pRetry from 'p-retry';
 import { HttpClient, VntezError } from '../../http';
 import {
   getDataSize,
@@ -184,14 +186,14 @@ export class R2Module {
   }
 
   /**
-   * Upload file lớn dạng Multipart (chia mảnh 5MB+, đa luồng, tự động ghép)
+   * Upload file lớn dạng Multipart (sử dụng p-limit kiểm soát luồng và p-retry chống rớt gói tin)
    */
   async uploadMultipart(
     data: File | Blob | Uint8Array | ArrayBuffer,
     options: MultipartUploadOptions
   ): Promise<UploadResult> {
     const partSize = options.partSize || 5 * 1024 * 1024; // Mặc định 5MB
-    const concurrency = Math.max(1, Math.min(options.concurrency || 3, 10)); // 3 luồng
+    const concurrency = Math.max(1, Math.min(options.concurrency || 3, 10)); // Mặc định 3 luồng
     const mimeType = options.type || inferMimeType(data, options.filename);
     const totalSize = getDataSize(data);
 
@@ -201,7 +203,7 @@ export class R2Module {
 
     const totalParts = Math.ceil(totalSize / partSize);
 
-    // 1. Khởi tạo phiên
+    // 1. Khởi tạo phiên upload
     const init = await this.initiateMultipartUpload({
       filename: options.filename,
       type: mimeType,
@@ -228,32 +230,27 @@ export class R2Module {
     };
 
     try {
-      // 2. Chuẩn bị danh sách parts cần upload
+      // 2. Kiểm soát luồng bằng p-limit
+      const limit = pLimit(concurrency);
       const partNumbers = Array.from({ length: totalParts }, (_, i) => i + 1);
 
-      // Xử lý concurrency pool
-      let currentIndex = 0;
-      const worker = async () => {
-        while (currentIndex < partNumbers.length) {
-          const partIndex = currentIndex++;
-          const partNumber = partNumbers[partIndex];
+      const tasks = partNumbers.map((partNumber) =>
+        limit(async () => {
           const start = (partNumber - 1) * partSize;
           const end = Math.min(start + partSize, totalSize);
           const chunk = sliceData(data, start, end, mimeType);
 
-          // Lấy presigned URL cho part này
+          // Xin presigned URL cho part này
           const signedPart = await this.signPart({
             key: init.key,
             uploadId: init.uploadId,
             partNumber,
           });
 
-          // Upload chunk và lấy ETag
-          let etag = '';
-          let retries = 3;
-          while (retries > 0) {
-            try {
-              const res = await uploadBinaryData(
+          // Upload chunk với p-retry tự động thử lại khi mất mạng
+          const uploadRes = await pRetry(
+            () =>
+              uploadBinaryData(
                 signedPart.url,
                 chunk,
                 mimeType,
@@ -261,26 +258,23 @@ export class R2Module {
                   partBytesLoaded.set(partNumber, loaded);
                   updateOverallProgress();
                 }
-              );
-              etag = res.etag;
-              break;
-            } catch (err) {
-              retries--;
-              if (retries === 0) throw err;
-              await new Promise((r) => setTimeout(r, 1000));
+              ),
+            {
+              retries: 3,
+              factor: 2,
+              minTimeout: 500,
+              maxTimeout: 3000,
             }
-          }
+          );
 
-          parts.push({ PartNumber: partNumber, ETag: etag });
+          parts.push({ PartNumber: partNumber, ETag: uploadRes.etag });
           if (options.onPartComplete) {
             options.onPartComplete({ partNumber, totalParts });
           }
-        }
-      };
+        })
+      );
 
-      // Chạy đồng thời `concurrency` workers
-      const pool = Array.from({ length: Math.min(concurrency, totalParts) }, () => worker());
-      await Promise.all(pool);
+      await Promise.all(tasks);
 
       // 3. Sắp xếp Parts tăng dần và Hoàn tất
       parts.sort((a, b) => a.PartNumber - b.PartNumber);
@@ -300,7 +294,7 @@ export class R2Module {
       try {
         await this.abortMultipartUpload({ key: init.key, uploadId: init.uploadId });
       } catch {
-        // ignore abort error
+        // bỏ qua lỗi abort nếu phiên đã đóng
       }
       throw error;
     }

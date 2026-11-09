@@ -1,3 +1,4 @@
+import mime from 'mime';
 import { VntezError } from '../../http';
 
 export function getDataSize(data: File | Blob | Uint8Array | ArrayBuffer): number {
@@ -10,25 +11,26 @@ export function getDataSize(data: File | Blob | Uint8Array | ArrayBuffer): numbe
   return 0;
 }
 
-export function inferMimeType(data: any, filename: string): string {
-  if (data && typeof data.type === 'string' && data.type) {
-    return data.type;
+/**
+ * Suy đoán MIME type chính xác từ File, Blob hoặc tên file / đường dẫn
+ * Sử dụng thư viện `mime` chuẩn quốc tế (hỗ trợ hàng ngàn định dạng và đuôi mở rộng)
+ */
+export function inferMimeType(data: any, filename?: string): string {
+  // 1. Ưu tiên MIME type đã có trên đối tượng File/Blob
+  if (data && typeof data.type === 'string' && data.type.trim()) {
+    return data.type.trim();
   }
-  const ext = filename.split('.').pop()?.toLowerCase();
-  switch (ext) {
-    case 'png': return 'image/png';
-    case 'jpg':
-    case 'jpeg': return 'image/jpeg';
-    case 'webp': return 'image/webp';
-    case 'gif': return 'image/gif';
-    case 'svg': return 'image/svg+xml';
-    case 'pdf': return 'application/pdf';
-    case 'mp4': return 'video/mp4';
-    case 'webm': return 'video/webm';
-    case 'zip': return 'application/zip';
-    case 'json': return 'application/json';
-    default: return 'application/octet-stream';
+
+  // 2. Tra cứu bằng thư viện mime chuẩn dựa trên filename
+  if (filename) {
+    const detected = mime.getType(filename);
+    if (detected) {
+      return detected;
+    }
   }
+
+  // 3. Fallback mặc định an toàn cho binary payload
+  return 'application/octet-stream';
 }
 
 export function toBodyInit(data: File | Blob | Uint8Array | ArrayBuffer, type?: string): BodyInit {

@@ -18,19 +18,15 @@ export async function request<T>(
 ): Promise<T> {
   const { query, timeoutMs = 30000, headers: customHeaders, ...fetchOptions } = options;
 
-  let requestUrl = url;
+  const parsedUrl = new URL(url);
   if (query) {
-    const searchParams = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) {
       if (value !== undefined && value !== null) {
-        searchParams.append(key, String(value));
+        parsedUrl.searchParams.set(key, String(value));
       }
     }
-    const queryString = searchParams.toString();
-    if (queryString) {
-      requestUrl += (requestUrl.includes('?') ? '&' : '?') + queryString;
-    }
   }
+  const requestUrl = parsedUrl.toString();
 
   const headers = new Headers(customHeaders);
   if (!headers.has('Accept')) {
