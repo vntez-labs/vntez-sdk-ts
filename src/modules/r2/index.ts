@@ -1,4 +1,11 @@
-import { request, VntezError } from '../http';
+import { HttpClient, VntezError } from '../../http';
+import {
+  getDataSize,
+  inferMimeType,
+  sliceData,
+  toBodyInit,
+  uploadBinaryData,
+} from './helpers';
 import type {
   AutoUploadOptions,
   CompleteMultipartResult,
@@ -11,27 +18,26 @@ import type {
   R2ClientConfig,
   SingleUploadOptions,
   UploadPartResult,
-  UploadProgress,
   UploadResult,
-} from '../types';
+} from '../../types';
 
 export class R2Module {
-  private readonly baseUrl: string;
-  private readonly apiKey?: string;
   private readonly defaultFolder: string;
+  private readonly http: HttpClient;
 
   constructor(config: R2ClientConfig = {}) {
-    this.baseUrl = (config.baseUrl || 'https://upload.hnamhocit.workers.dev').replace(/\/+$/, '');
-    this.apiKey = config.apiKey;
+    const baseUrl = (config.baseUrl || 'https://upload.hnamhocit.workers.dev').replace(/\/+$/, '');
     this.defaultFolder = config.defaultFolder || 'uploads';
-  }
 
-  private getAuthHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {};
-    if (this.apiKey) {
-      headers['X-API-Key'] = this.apiKey;
-    }
-    return headers;
+    const getHeaders = () => {
+      const headers: Record<string, string> = {};
+      if (config.apiKey) {
+        headers['X-API-Key'] = config.apiKey;
+      }
+      return headers;
+    };
+
+    this.http = new HttpClient(baseUrl, getHeaders);
   }
 
   // --------------------------------------------------------------------------
@@ -47,15 +53,11 @@ export class R2Module {
     userId?: string;
     folder?: string;
   }): Promise<PresignedUploadResult> {
-    return request<PresignedUploadResult>(`${this.baseUrl}/api/upload/single`, {
-      method: 'POST',
-      headers: this.getAuthHeaders(),
-      body: JSON.stringify({
-        filename: options.filename,
-        type: options.type,
-        userId: options.userId,
-        folder: options.folder || this.defaultFolder,
-      }),
+    return this.http.post<PresignedUploadResult>('/api/upload/single', {
+      filename: options.filename,
+      type: options.type,
+      userId: options.userId,
+      folder: options.folder || this.defaultFolder,
     });
   }
 
@@ -68,15 +70,11 @@ export class R2Module {
     userId?: string;
     folder?: string;
   }): Promise<MultipartStartResult> {
-    return request<MultipartStartResult>(`${this.baseUrl}/api/upload/multipart/start`, {
-      method: 'POST',
-      headers: this.getAuthHeaders(),
-      body: JSON.stringify({
-        filename: options.filename,
-        type: options.type,
-        userId: options.userId,
-        folder: options.folder || this.defaultFolder,
-      }),
+    return this.http.post<MultipartStartResult>('/api/upload/multipart/start', {
+      filename: options.filename,
+      type: options.type,
+      userId: options.userId,
+      folder: options.folder || this.defaultFolder,
     });
   }
 
@@ -88,11 +86,7 @@ export class R2Module {
     uploadId: string;
     partNumber: number;
   }): Promise<UploadPartResult> {
-    return request<UploadPartResult>(`${this.baseUrl}/api/upload/multipart/part`, {
-      method: 'POST',
-      headers: this.getAuthHeaders(),
-      body: JSON.stringify(options),
-    });
+    return this.http.post<UploadPartResult>('/api/upload/multipart/part', options);
   }
 
   /**
@@ -103,13 +97,9 @@ export class R2Module {
     uploadId: string;
     partNumbers: number[];
   }): Promise<Record<number, string>> {
-    const res = await request<{ presignedUrls: Record<number, string> }>(
-      `${this.baseUrl}/api/upload/multipart/batch-sign-parts`,
-      {
-        method: 'POST',
-        headers: this.getAuthHeaders(),
-        body: JSON.stringify(options),
-      }
+    const res = await this.http.post<{ presignedUrls: Record<number, string> }>(
+      '/api/upload/multipart/batch-sign-parts',
+      options
     );
     return res.presignedUrls;
   }
@@ -122,13 +112,9 @@ export class R2Module {
     uploadId: string;
     parts: PartETag[];
   }): Promise<CompleteMultipartResult> {
-    return request<CompleteMultipartResult>(
-      `${this.baseUrl}/api/upload/multipart/complete`,
-      {
-        method: 'POST',
-        headers: this.getAuthHeaders(),
-        body: JSON.stringify(options),
-      }
+    return this.http.post<CompleteMultipartResult>(
+      '/api/upload/multipart/complete',
+      options
     );
   }
 
@@ -139,20 +125,14 @@ export class R2Module {
     key: string;
     uploadId: string;
   }): Promise<{ aborted: boolean }> {
-    return request<{ aborted: boolean }>(`${this.baseUrl}/api/upload/multipart/abort`, {
-      method: 'POST',
-      headers: this.getAuthHeaders(),
-      body: JSON.stringify(options),
-    });
+    return this.http.post<{ aborted: boolean }>('/api/upload/multipart/abort', options);
   }
 
   /**
    * Lấy Presigned GET URL để download / view file từ bucket private
    */
   async getDownloadUrl(options: DownloadUrlOptions): Promise<DownloadUrlResult> {
-    return request<DownloadUrlResult>(`${this.baseUrl}/api/upload/download-url`, {
-      method: 'GET',
-      headers: this.getAuthHeaders(),
+    return this.http.get<DownloadUrlResult>('/api/upload/download-url', {
       query: {
         key: options.key,
         expiresIn: options.expiresIn,
@@ -260,7 +240,6 @@ export class R2Module {
           const start = (partNumber - 1) * partSize;
           const end = Math.min(start + partSize, totalSize);
           const chunk = sliceData(data, start, end, mimeType);
-          const chunkSize = end - start;
 
           // Lấy presigned URL cho part này
           const signedPart = await this.signPart({
@@ -318,11 +297,10 @@ export class R2Module {
         isMultipart: true,
       };
     } catch (error) {
-      // Tự động abort nếu tiến trình upload gặp lỗi giữa chừng
       try {
         await this.abortMultipartUpload({ key: init.key, uploadId: init.uploadId });
       } catch {
-        // bỏ qua lỗi abort
+        // ignore abort error
       }
       throw error;
     }
@@ -345,127 +323,5 @@ export class R2Module {
   }
 }
 
-// ----------------------------------------------------------------------------
-// Internal Helpers
-// ----------------------------------------------------------------------------
-
-function getDataSize(data: File | Blob | Uint8Array | ArrayBuffer): number {
-  if (typeof (data as Blob).size === 'number') {
-    return (data as Blob).size;
-  }
-  if ((data as Uint8Array).byteLength !== undefined) {
-    return (data as Uint8Array).byteLength;
-  }
-  return 0;
-}
-
-function inferMimeType(data: any, filename: string): string {
-  if (data && typeof data.type === 'string' && data.type) {
-    return data.type;
-  }
-  const ext = filename.split('.').pop()?.toLowerCase();
-  switch (ext) {
-    case 'png': return 'image/png';
-    case 'jpg':
-    case 'jpeg': return 'image/jpeg';
-    case 'webp': return 'image/webp';
-    case 'gif': return 'image/gif';
-    case 'svg': return 'image/svg+xml';
-    case 'pdf': return 'application/pdf';
-    case 'mp4': return 'video/mp4';
-    case 'webm': return 'video/webm';
-    case 'zip': return 'application/zip';
-    case 'json': return 'application/json';
-    default: return 'application/octet-stream';
-  }
-}
-
-function toBodyInit(data: File | Blob | Uint8Array | ArrayBuffer, type?: string): BodyInit {
-  if (typeof Blob !== 'undefined' && (data instanceof Blob || (typeof File !== 'undefined' && data instanceof File))) {
-    return data;
-  }
-  if (data instanceof Uint8Array || data instanceof ArrayBuffer) {
-    return data as unknown as BodyInit;
-  }
-  return new Blob([data as any], { type: type || 'application/octet-stream' });
-}
-
-function sliceData(
-  data: File | Blob | Uint8Array | ArrayBuffer,
-  start: number,
-  end: number,
-  type?: string
-): BodyInit {
-  if (typeof (data as Blob).slice === 'function') {
-    return (data as Blob).slice(start, end, type);
-  }
-  if (data instanceof Uint8Array) {
-    return data.subarray(start, end) as unknown as BodyInit;
-  }
-  if (data instanceof ArrayBuffer) {
-    return new Uint8Array(data, start, end - start) as unknown as BodyInit;
-  }
-  throw new Error('Unsupported binary data type for slicing');
-}
-
-/**
- * Upload binary payload lên presigned PUT URL với hỗ trợ progress tracking
- */
-async function uploadBinaryData(
-  url: string,
-  body: BodyInit,
-  contentType: string,
-  onProgress?: (loaded: number) => void
-): Promise<{ etag: string }> {
-  // 1. Trình duyệt có XMLHttpRequest: Theo dõi byte chính xác
-  if (typeof XMLHttpRequest !== 'undefined') {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('PUT', url, true);
-      xhr.setRequestHeader('Content-Type', contentType);
-
-      if (onProgress && xhr.upload) {
-        xhr.upload.onprogress = (evt) => {
-          if (evt.lengthComputable) {
-            onProgress(evt.loaded);
-          }
-        };
-      }
-
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          const etag = (xhr.getResponseHeader('ETag') || '').replace(/['"]+/g, '');
-          resolve({ etag });
-        } else {
-          reject(new VntezError(`Upload to storage failed with status ${xhr.status}: ${xhr.statusText}`, xhr.status));
-        }
-      };
-
-      xhr.onerror = () => reject(new VntezError('Network error while uploading data to storage'));
-      xhr.send(body as any);
-    });
-  }
-
-  // 2. Node / Bun / Worker môi trường không có XHR: Dùng fetch
-  const res = await fetch(url, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': contentType,
-    },
-    body,
-  });
-
-  if (!res.ok) {
-    throw new VntezError(`Upload to storage failed with status ${res.status}: ${res.statusText}`, res.status);
-  }
-
-  if (onProgress) {
-    const size = typeof (body as any).size === 'number' ? (body as any).size : (body as any).byteLength || 0;
-    onProgress(size);
-  }
-
-  const etag = (res.headers.get('ETag') || '').replace(/['"]+/g, '');
-  return { etag };
-}
-
 export const createR2Client = (config: R2ClientConfig = {}) => new R2Module(config);
+export * from './helpers';

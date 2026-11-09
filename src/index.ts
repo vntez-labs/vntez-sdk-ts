@@ -2,7 +2,7 @@
 export { VntezClient, createClient } from './client';
 
 // Modules
-export { AuthModule } from './modules/auth';
+export { AuthModule, DefaultBrowserStorage, MemoryStorage } from './modules/auth';
 export { R2Module, createR2Client, R2Module as R2Client } from './modules/r2';
 export {
   TeleBotModule,
@@ -13,8 +13,8 @@ export {
   TeleBotWebhookClient,
 } from './modules/telebot';
 
-// Error handling
-export { VntezError } from './http';
+// HTTP Client & Error Handling
+export { HttpClient, request, VntezError } from './http';
 
 // Types
 export * from './types';

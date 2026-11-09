@@ -1,43 +1,32 @@
-import { generatePkce } from '../utils/crypto';
+import { generatePkce } from '../../utils/crypto';
+import { DefaultBrowserStorage } from './storage';
+import { HttpClient } from '../../http';
 import type {
   AuthStorage,
   SignOutOptions,
   TokenResponse,
   UserInfo,
   VntezClientConfig,
-} from '../types';
-
-class DefaultBrowserStorage implements AuthStorage {
-  getItem(key: string): string | null {
-    if (typeof window !== 'undefined' && window.sessionStorage) {
-      return window.sessionStorage.getItem(key);
-    }
-    return null;
-  }
-  setItem(key: string, value: string): void {
-    if (typeof window !== 'undefined' && window.sessionStorage) {
-      window.sessionStorage.setItem(key, value);
-    }
-  }
-  removeItem(key: string): void {
-    if (typeof window !== 'undefined' && window.sessionStorage) {
-      window.sessionStorage.removeItem(key);
-    }
-  }
-}
+} from '../../types';
 
 export class AuthModule {
+  public readonly clientId: string;
+  public readonly clientSecret?: string;
   private readonly gatewayUrl: string;
   private readonly storage: AuthStorage;
+  private readonly http: HttpClient;
 
   private readonly KEY_STATE = 'vntez_oauth_state';
   private readonly KEY_VERIFIER = 'vntez_oauth_verifier';
   private readonly KEY_TOKEN = 'vntez_access_token';
   private readonly KEY_USER = 'vntez_user_profile';
 
-  constructor(private readonly config: VntezClientConfig) {
-    this.gatewayUrl = (config.gatewayUrl || 'https://vntez-iam.vercel.app').replace(/\/+$/, '');
+  constructor(private readonly config: VntezClientConfig = {}) {
+    this.clientId = config.clientId || config.id || '';
+    this.clientSecret = config.clientSecret || config.secret;
+    this.gatewayUrl = (config.gatewayUrl || 'https://iam.hnamhocit.workers.dev').replace(/\/+$/, '');
     this.storage = config.storage || new DefaultBrowserStorage();
+    this.http = new HttpClient(this.gatewayUrl);
   }
 
   /**
@@ -50,7 +39,7 @@ export class AuthModule {
     await this.storage.setItem(this.KEY_VERIFIER, pkce.verifier);
 
     const params = new URLSearchParams({
-      client_id: this.config.clientId || '',
+      client_id: this.clientId,
       redirect_uri: this.config.redirectUri || '',
       response_type: 'code',
       state: pkce.state,
@@ -84,7 +73,6 @@ export class AuthModule {
     const savedState = await this.storage.getItem(this.KEY_STATE);
     const codeVerifier = await this.storage.getItem(this.KEY_VERIFIER);
 
-    // Xóa ngay thông tin PKCE sau khi lấy ra đối chiếu
     await this.storage.removeItem(this.KEY_STATE);
     await this.storage.removeItem(this.KEY_VERIFIER);
 
@@ -113,24 +101,19 @@ export class AuthModule {
    * Đổi Authorization Code lấy Access Token
    */
   async exchangeCodeForToken(code: string, codeVerifier: string): Promise<TokenResponse> {
-    const response = await fetch(`${this.gatewayUrl}/oauth/token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        grant_type: 'authorization_code',
-        code,
-        client_id: this.config.clientId,
-        code_verifier: codeVerifier,
-        redirect_uri: this.config.redirectUri,
-      }),
-    });
+    const payload: Record<string, string> = {
+      grant_type: 'authorization_code',
+      code,
+      client_id: this.clientId,
+      code_verifier: codeVerifier,
+      redirect_uri: this.config.redirectUri || '',
+    };
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Token exchange error (${response.status}): ${errorText}`);
+    if (this.clientSecret) {
+      payload.client_secret = this.clientSecret;
     }
 
-    return response.json() as Promise<TokenResponse>;
+    return this.http.post<TokenResponse>('/oauth/token', payload);
   }
 
   /**
@@ -138,31 +121,20 @@ export class AuthModule {
    */
   async getUserInfo(accessToken: string, appIdOverride?: string): Promise<UserInfo> {
     const targetAppId = appIdOverride || this.config.appId;
-    const url = new URL(`${this.gatewayUrl}/oauth/userinfo`);
-
-    if (targetAppId) {
-      url.searchParams.set('app_id', targetAppId);
-    }
-
+    const query: Record<string, string> = {};
     const headers: Record<string, string> = {
       Authorization: `Bearer ${accessToken}`,
     };
 
     if (targetAppId) {
+      query.app_id = targetAppId;
       headers['X-App-Id'] = targetAppId;
     }
 
-    const response = await fetch(url.toString(), {
-      method: 'GET',
+    return this.http.get<UserInfo>('/oauth/userinfo', {
+      query,
       headers,
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Get userinfo error (${response.status}): ${errorText}`);
-    }
-
-    return response.json() as Promise<UserInfo>;
   }
 
   /**
@@ -170,7 +142,6 @@ export class AuthModule {
    * Xóa token cục bộ và chuyển hướng sang IAM Gateway để dọn cookie SSO
    */
   async signOut(options: SignOutOptions = {}): Promise<void> {
-    // 1. Xóa sạch dữ liệu lưu ở App
     await Promise.all([
       this.storage.removeItem(this.KEY_TOKEN),
       this.storage.removeItem(this.KEY_USER),
@@ -178,10 +149,9 @@ export class AuthModule {
       this.storage.removeItem(this.KEY_VERIFIER),
     ]);
 
-    // 2. Chuyển hướng tới Gateway để xóa phiên SSO
     if (typeof window !== 'undefined') {
       const returnUrl = options.redirectUrl || window.location.origin;
-      const logoutUrl = new URL(`${this.gatewayUrl}/auth/logout`);
+      const logoutUrl = new URL(`${this.gatewayUrl}/oauth/logout`);
       logoutUrl.searchParams.set('redirect_url', returnUrl);
 
       window.location.href = logoutUrl.toString();
@@ -216,3 +186,5 @@ export class AuthModule {
     return Boolean(token);
   }
 }
+
+export * from './storage';

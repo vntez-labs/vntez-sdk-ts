@@ -26,21 +26,18 @@ pnpm add @vntez/sdk
 
 ## Quickstart: Unified Client
 
+Khởi tạo client yêu cầu cung cấp **`id` (hoặc `clientId`)** và **`secret` (hoặc `clientSecret`)**. Mã bí mật `secret` sẽ tự động được các module (R2, TeleBot, IAM) kế thừa làm `apiKey` xác thực:
+
 ```typescript
 import { createClient } from '@vntez/sdk';
 
 const vntez = createClient({
-  // IAM Auth (Optional)
-  clientId: 'your-oauth-client-id',
+  // Bắt buộc: Định danh & Mã bí mật ứng dụng
+  id: 'your-client-id',           // hoặc clientId
+  secret: 'your-client-secret',   // hoặc clientSecret
+
+  // Cấu hình OAuth Callback (nếu dùng IAM SSO)
   redirectUri: 'https://myapp.com/callback',
-
-  // R2 Storage (Optional custom URL / API key)
-  r2Url: 'https://upload.hnamhocit.workers.dev',
-  r2ApiKey: 'your-admin-secret',
-
-  // TeleBot (Optional custom URL / API key)
-  telebotUrl: 'https://telebot.hnamhocit.workers.dev',
-  telebotApiKey: 'your-admin-secret',
 });
 ```
 
