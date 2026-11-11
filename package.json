@@ -21,10 +21,9 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "build": "tsup src/index.ts --format cjs,esm,iife --global-name Vntez --dts --clean",
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "vntez",
@@ -33,16 +32,9 @@
   ],
   "author": "Your Name",
   "license": "MIT",
-  "dependencies": {
-    "mime": "^4.1.2",
-    "nanoid": "^6.0.2",
-    "p-limit": "^7.3.3",
-    "p-retry": "^9.0.0"
-  },
+  "dependencies": {},
   "devDependencies": {
-    "@types/mime": "^4.0.0",
     "tsup": "^9.0.0",
-    "typescript": "^5.8.2",
-    "vitest": "^5.1.0"
+    "typescript": "^5.8.2"
   }
 }

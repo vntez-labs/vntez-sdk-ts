@@ -1,63 +1,75 @@
-export interface AuthStorage {
-  getItem(key: string): string | null | Promise<string | null>;
-  setItem(key: string, value: string): void | Promise<void>;
-  removeItem(key: string): void | Promise<void>;
+export interface VntezClientConfig {
+  appId: string;
+  iamUrl?: string;      // default: 'https://vntez-iam.vercel.app'
+  uploadUrl?: string;   // default: 'https://upload.vntez.com'
 }
 
-export interface ClientCredentials {
-  /**
-   * Client ID / App ID (Định danh ứng dụng OAuth 2.0 hoặc Client)
-   */
-  id?: string;
-  clientId?: string;
-
-  /**
-   * Client Secret (Mã bí mật dùng để xác thực các dịch vụ Edge)
-   */
-  secret?: string;
-  clientSecret?: string;
+export interface VntezUser {
+  id: string;
+  email: string;
+  name?: string;
+  avatar?: string;
+  roles: string[];
+  permissions: string[];
+  metadata?: Record<string, unknown>;
 }
 
-export interface VntezClientConfig extends ClientCredentials {
-  /**
-   * Redirect URI dùng cho OAuth 2.0 PKCE Callback
-   */
-  redirectUri?: string;
+export interface TokenResponse {
+  access_token: string;
+  token_type: string;
+  expires_in?: number;
+  refresh_token?: string;
+  scope?: string;
+}
 
-  /**
-   * IAM SSO Gateway URL. Mặc định: https://iam.hnamhocit.workers.dev
-   */
-  gatewayUrl?: string;
+export interface RemoteConfigResponse<T = Record<string, unknown>> {
+  enabled: boolean;
+  config: T;
+}
 
-  /**
-   * App ID dùng để scope permissions/roles (ví dụ: 'solotype', 'vntez')
-   */
-  appId?: string;
+export interface FileInfo {
+  key: string;
+  size: number;
+  contentType: string;
+  lastModified: string;
+  etag: string;
+  metadata?: Record<string, unknown>;
+}
 
-  /**
-   * Custom storage cho OAuth session (mặc định: sessionStorage trên browser)
-   */
-  storage?: AuthStorage;
+export interface SingleUploadResponse {
+  success: boolean;
+  key: string;
+  url: string;
+}
 
-  /**
-   * Endpoint URL của Upload Worker (R2). Mặc định: https://upload.hnamhocit.workers.dev
-   */
-  r2Url?: string;
+export interface MultipartCreateResponse {
+  uploadId: string;
+  key: string;
+}
 
-  /**
-   * Endpoint URL của TeleBot Worker. Mặc định: https://telebot.hnamhocit.workers.dev
-   */
-  telebotUrl?: string;
+export interface UploadPartResponse {
+  partNumber: number;
+  etag: string;
+}
 
-  /**
-   * API Key riêng cho R2 (nếu không cung cấp sẽ tự dùng clientSecret / secret)
-   */
-  r2ApiKey?: string;
+export interface CompleteMultipartResponse {
+  success: boolean;
+  key: string;
+  url: string;
+}
 
-  /**
-   * API Key riêng cho TeleBot (nếu không cung cấp sẽ tự dùng clientSecret / secret)
-   */
-  telebotApiKey?: string;
+export interface MultipartPart {
+  partNumber: number;
+  etag: string;
+}
+
+export interface DeleteResponse {
+  success: boolean;
+}
+
+export interface UppyCompanionOptions {
+  companionUrl: string;
+  headers?: Record<string, string>;
 }
 
 export interface HttpRequestOptions extends RequestInit {

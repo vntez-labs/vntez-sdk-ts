@@ -1,20 +1,10 @@
 // Core Client
-export { VntezClient, createClient } from './client';
+export { VntezClient } from './client';
 
 // Modules
-export { AuthModule, DefaultBrowserStorage, MemoryStorage } from './modules/auth';
-export { R2Module, createR2Client, R2Module as R2Client } from './modules/r2';
-export {
-  TeleBotModule,
-  createTeleBotClient,
-  TeleBotModule as TeleBotClient,
-  TeleBotSubscribersClient,
-  TeleBotAuthClient,
-  TeleBotWebhookClient,
-} from './modules/telebot';
-
-// HTTP Client & Error Handling
-export { HttpClient, request, VntezError } from './http';
+export { AuthModule } from './modules/auth';
+export { ConfigModule } from './modules/config';
+export { UploadModule } from './modules/upload';
 
 // Types
 export * from './types';

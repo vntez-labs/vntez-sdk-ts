@@ -1,65 +1,60 @@
-import { generatePkce } from '../../utils/crypto';
-import { DefaultBrowserStorage } from './storage';
-import { HttpClient } from '../../http';
-import type {
-  AuthStorage,
-  SignOutOptions,
-  TokenResponse,
-  UserInfo,
-  VntezClientConfig,
-} from '../../types';
+import {
+  generateCodeVerifier,
+  generateCodeChallenge,
+  generateState,
+  BrowserStorage,
+  safeJsonParse,
+} from '../../utils/crypto';
+import type { VntezUser, TokenResponse } from '../../types';
+
+const STATE_KEY = 'vntez_oauth_state';
+const VERIFIER_KEY = 'vntez_oauth_verifier';
+const TOKEN_KEY = 'vntez_access_token';
+const USER_KEY = 'vntez_user_profile';
 
 export class AuthModule {
-  public readonly clientId: string;
-  public readonly clientSecret?: string;
-  private readonly gatewayUrl: string;
-  private readonly storage: AuthStorage;
-  private readonly http: HttpClient;
+  private readonly appId: string;
+  private readonly iamUrl: string;
+  private readonly sessionStorage: BrowserStorage;
+  private readonly localStorage: BrowserStorage;
 
-  private readonly KEY_STATE = 'vntez_oauth_state';
-  private readonly KEY_VERIFIER = 'vntez_oauth_verifier';
-  private readonly KEY_TOKEN = 'vntez_access_token';
-  private readonly KEY_USER = 'vntez_user_profile';
-
-  constructor(private readonly config: VntezClientConfig = {}) {
-    this.clientId = config.clientId || '';
-    this.clientSecret = config.clientSecret || config.secret;
-    this.gatewayUrl = (config.gatewayUrl || 'https://iam.hnamhocit.workers.dev').replace(/\/+$/, '');
-    this.storage = config.storage || new DefaultBrowserStorage();
-    this.http = new HttpClient(this.gatewayUrl);
+  constructor(config: { appId: string; iamUrl?: string }) {
+    this.appId = config.appId;
+    this.iamUrl = config.iamUrl || 'https://vntez-iam.vercel.app';
+    this.sessionStorage = new BrowserStorage('session');
+    this.localStorage = new BrowserStorage('local');
   }
 
-  /**
-   * BƯỚC 1 & 2: Sinh mã PKCE, tự lưu sessionStorage và điều hướng sang SSO Portal
-   */
-  async signInWithRedirect(): Promise<void> {
-    const pkce = await generatePkce();
+  async signIn(options?: { redirectUri?: string }): Promise<void> {
+    if (typeof window === 'undefined') {
+      throw new Error('signIn can only be called in a browser environment');
+    }
 
-    await this.storage.setItem(this.KEY_STATE, pkce.state);
-    await this.storage.setItem(this.KEY_VERIFIER, pkce.verifier);
+    const codeVerifier = generateCodeVerifier();
+    const state = generateState();
+    const codeChallenge = await generateCodeChallenge(codeVerifier);
+
+    // Store PKCE data in sessionStorage
+    this.sessionStorage.setItem(STATE_KEY, state);
+    this.sessionStorage.setItem(VERIFIER_KEY, codeVerifier);
 
     const params = new URLSearchParams({
-      client_id: this.clientId,
-      redirect_uri: this.config.redirectUri || '',
       response_type: 'code',
-      state: pkce.state,
-      code_challenge: pkce.challenge,
+      client_id: this.appId,
+      redirect_uri: options?.redirectUri || window.location.origin,
+      state,
+      code_challenge: codeChallenge,
       code_challenge_method: 'S256',
+      scope: 'openid profile email',
     });
 
-    const url = `${this.gatewayUrl}/oauth/authorize?${params.toString()}`;
-
-    if (typeof window !== 'undefined') {
-      window.location.href = url;
-    }
+    const authUrl = `${this.iamUrl}/oauth/authorize?${params.toString()}`;
+    window.location.href = authUrl;
   }
 
-  /**
-   * BƯỚC 3 & 4: Xử lý tại Callback URL (đổi token, lấy userinfo, lưu token)
-   */
-  async handleCallback(): Promise<{ token: TokenResponse; user: UserInfo }> {
+  async handleCallback(redirectUri?: string): Promise<{ accessToken: string; user: VntezUser }> {
     if (typeof window === 'undefined') {
-      throw new Error('handleCallback can only be executed in a browser environment');
+      throw new Error('handleCallback can only be called in a browser environment');
     }
 
     const urlParams = new URLSearchParams(window.location.search);
@@ -67,124 +62,118 @@ export class AuthModule {
     const state = urlParams.get('state');
 
     if (!code) {
-      throw new Error('Missing authorization code in URL query');
+      throw new Error('Missing authorization code in URL');
     }
 
-    const savedState = await this.storage.getItem(this.KEY_STATE);
-    const codeVerifier = await this.storage.getItem(this.KEY_VERIFIER);
+    const savedState = this.sessionStorage.getItem(STATE_KEY);
+    const codeVerifier = this.sessionStorage.getItem(VERIFIER_KEY);
 
-    await this.storage.removeItem(this.KEY_STATE);
-    await this.storage.removeItem(this.KEY_VERIFIER);
+    // Clean up session storage
+    this.sessionStorage.removeItem(STATE_KEY);
+    this.sessionStorage.removeItem(VERIFIER_KEY);
 
     if (!state || !savedState || state !== savedState) {
-      throw new Error('CSRF Warning: State mismatch or session expired');
+      throw new Error('CSRF state mismatch');
     }
 
     if (!codeVerifier) {
-      throw new Error('Missing code_verifier in storage. Authentication session expired');
+      throw new Error('Missing code verifier');
     }
 
-    // 1. Đổi code lấy Access Token
-    const token = await this.exchangeCodeForToken(code, codeVerifier);
+    // Exchange code for access token
+    const tokenData = await this.exchangeCodeForToken(code, codeVerifier, redirectUri);
+    const accessToken = tokenData.access_token;
 
-    // 2. Lấy User Profile
-    const user = await this.getUserInfo(token.access_token);
+    // Get user info
+    const userInfo = await this.getUserInfo(accessToken);
 
-    // 3. Tự lưu vào Storage
-    await this.storage.setItem(this.KEY_TOKEN, token.access_token);
-    await this.storage.setItem(this.KEY_USER, JSON.stringify(user));
+    // Store in localStorage
+    this.localStorage.setItem(TOKEN_KEY, accessToken);
+    this.localStorage.setItem(USER_KEY, JSON.stringify(userInfo));
 
-    return { token, user };
+    return { accessToken, user: userInfo };
   }
 
-  /**
-   * Đổi Authorization Code lấy Access Token
-   */
-  async exchangeCodeForToken(code: string, codeVerifier: string): Promise<TokenResponse> {
-    const payload: Record<string, string> = {
-      grant_type: 'authorization_code',
-      code,
-      client_id: this.clientId,
-      code_verifier: codeVerifier,
-      redirect_uri: this.config.redirectUri || '',
-    };
+  private async exchangeCodeForToken(
+    code: string,
+    codeVerifier: string,
+    redirectUri?: string
+  ): Promise<TokenResponse> {
+    const formData = new FormData();
+    formData.append('grant_type', 'authorization_code');
+    formData.append('code', code);
+    formData.append('client_id', this.appId);
+    formData.append('code_verifier', codeVerifier);
+    formData.append('redirect_uri', redirectUri || window.location.origin);
 
-    if (this.clientSecret) {
-      payload.client_secret = this.clientSecret;
-    }
-
-    return this.http.post<TokenResponse>('/oauth/token', payload);
-  }
-
-  /**
-   * Lấy User Info và Roles từ IAM
-   */
-  async getUserInfo(accessToken: string, appIdOverride?: string): Promise<UserInfo> {
-    const targetAppId = appIdOverride || this.config.appId;
-    const query: Record<string, string> = {};
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${accessToken}`,
-    };
-
-    if (targetAppId) {
-      query.app_id = targetAppId;
-      headers['X-App-Id'] = targetAppId;
-    }
-
-    return this.http.get<UserInfo>('/oauth/userinfo', {
-      query,
-      headers,
+    const response = await fetch(`${this.iamUrl}/oauth/token`, {
+      method: 'POST',
+      body: formData,
+      headers: {
+        'Accept': 'application/json',
+      },
     });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Token exchange failed: ${response.status} ${errorText}`);
+    }
+
+    return response.json();
   }
 
-  /**
-   * BƯỚC 5: Single Sign-Out
-   * Xóa token cục bộ và chuyển hướng sang IAM Gateway để dọn cookie SSO
-   */
-  async signOut(options: SignOutOptions = {}): Promise<void> {
-    await Promise.all([
-      this.storage.removeItem(this.KEY_TOKEN),
-      this.storage.removeItem(this.KEY_USER),
-      this.storage.removeItem(this.KEY_STATE),
-      this.storage.removeItem(this.KEY_VERIFIER),
-    ]);
+  private async getUserInfo(accessToken: string): Promise<VntezUser> {
+    const response = await fetch(`${this.iamUrl}/oauth/userinfo`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'X-App-Id': this.appId,
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to get user info: ${response.status} ${errorText}`);
+    }
+
+    return response.json();
+  }
+
+  signOut(redirectUrl?: string): void {
+    // Clear local storage
+    this.localStorage.removeItem(TOKEN_KEY);
+    this.localStorage.removeItem(USER_KEY);
 
     if (typeof window !== 'undefined') {
-      const returnUrl = options.redirectUrl || window.location.origin;
-      const logoutUrl = new URL(`${this.gatewayUrl}/oauth/logout`);
-      logoutUrl.searchParams.set('redirect_url', returnUrl);
-
+      const logoutUrl = new URL(`${this.iamUrl}/auth/logout`);
+      if (redirectUrl) {
+        logoutUrl.searchParams.set('redirect_url', redirectUrl);
+      } else if (window.location.origin) {
+        logoutUrl.searchParams.set('redirect_url', window.location.origin);
+      }
       window.location.href = logoutUrl.toString();
     }
   }
 
-  /**
-   * Helper lấy token đã lưu trong storage
-   */
-  async getAccessToken(): Promise<string | null> {
-    return this.storage.getItem(this.KEY_TOKEN);
-  }
-
-  /**
-   * Helper lấy user profile đã lưu trong storage
-   */
-  async getUser(): Promise<UserInfo | null> {
-    const raw = await this.storage.getItem(this.KEY_USER);
-    if (!raw) return null;
+  getToken(): string | null {
     try {
-      return JSON.parse(raw) as UserInfo;
+      return this.localStorage.getItem(TOKEN_KEY);
     } catch {
       return null;
     }
   }
 
-  /**
-   * Kiểm tra xem user hiện tại đã đăng nhập chưa
-   */
-  async isAuthenticated(): Promise<boolean> {
-    const token = await this.getAccessToken();
-    return Boolean(token);
+  getUser(): VntezUser | null {
+    try {
+      const userJson = this.localStorage.getItem(USER_KEY);
+      return safeJsonParse<VntezUser>(userJson);
+    } catch {
+      return null;
+    }
+  }
+
+  isAuthenticated(): boolean {
+    return this.getToken() !== null;
   }
 }
-
-export * from './storage';
