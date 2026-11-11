@@ -1,11 +1,14 @@
 # @vntez/sdk
 
-Official TypeScript/JavaScript SDK for VNTEZ Edge Microservices platform. Built for modern Web Browsers, Cloudflare Workers, Node.js, and Bun.
+Zero-dependency TypeScript SDK for VNTEZ Platform. Built for modern Web Browsers, Node.js 18+, Cloudflare Workers, and Bun.
 
-Provides ergonomic, type-safe clients for:
-- **R2 / S3 Storage (`R2Module`)**: Direct single upload, chunked multipart upload (5MB+ chunks, multi-threaded, auto-retry), presigned download URLs, and progress tracking.
-- **TeleBot (`TeleBotModule`)**: Telegram Bot messaging, photos, broadcast (with Supabase audience segmentation), subscriber CRUD management, Login Widget & MiniApp initData cryptographic verification.
-- **IAM Auth (`AuthModule`)**: OAuth 2.0 PKCE flow, Single Sign-On (SSO), user profile & scoped RBAC permissions.
+**Features:**
+- 🚀 **Zero Runtime Dependencies** - Uses native Web Crypto API & fetch
+- 🔐 **OAuth 2.0 PKCE Authentication** - Secure browser-based authentication
+- 📦 **Unified Client API** - Simple, consistent interface across all services
+- ⚡ **R2 Multipart Upload** - Single & multipart upload with auto-retry
+- ⚙️ **Remote Config** - Dynamic configuration management
+- 📝 **Full TypeScript Support** - Complete type definitions
 
 ---
 
@@ -24,249 +27,217 @@ pnpm add @vntez/sdk
 
 ---
 
-## Quickstart: Unified Client
-
-Khởi tạo client yêu cầu cung cấp **`id` (hoặc `clientId`)** và **`secret` (hoặc `clientSecret`)**. Mã bí mật `secret` sẽ tự động được các module (R2, TeleBot, IAM) kế thừa làm `apiKey` xác thực:
+## Quick Start
 
 ```typescript
-import { createClient } from '@vntez/sdk';
+import { VntezClient } from '@vntez/sdk';
 
-const vntez = createClient({
-  // Bắt buộc: Định danh & Mã bí mật ứng dụng
-  id: 'your-client-id',           // hoặc clientId
-  secret: 'your-client-secret',   // hoặc clientSecret
-
-  // Cấu hình OAuth Callback (nếu dùng IAM SSO)
-  redirectUri: 'https://myapp.com/callback',
+// Initialize the client
+const vntez = new VntezClient({
+  appId: 'your-app-id',
+  iamUrl: 'https://vntez-iam.vercel.app',      // optional
+  uploadUrl: 'https://upload.vntez.com',       // optional
 });
-```
 
-You can also instantiate individual clients independently:
-
-```typescript
-import { createR2Client, createTeleBotClient } from '@vntez/sdk';
-
-const r2 = createR2Client({ baseUrl: 'https://upload.hnamhocit.workers.dev' });
-const telebot = createTeleBotClient({ baseUrl: 'https://telebot.hnamhocit.workers.dev', apiKey: 'secret' });
+// Use the SDK
+console.log(vntez.auth.isAuthenticated()); // Check auth status
 ```
 
 ---
 
-## 1. R2 Storage Client (`vntez.r2` or `createR2Client`)
+## Core Modules
 
-### 1.1 Direct Single Upload (< 10MB)
+### 1. Authentication (`vntez.auth`)
 
-Uploads small files directly to Cloudflare R2 using a presigned PUT URL:
+Secure OAuth 2.0 PKCE authentication for browser environments.
 
 ```typescript
-const fileInput = document.querySelector<HTMLInputElement>('#fileInput')!;
-const file = fileInput.files![0];
-
-const result = await vntez.r2.uploadSingle(file, {
-  filename: file.name,
-  folder: 'avatars',
-  userId: 'usr_123',
-  onProgress: (p) => {
-    console.log(`Uploaded ${p.percent}% (${p.loaded}/${p.total} bytes)`);
-  },
+// 1. Sign in (redirects to IAM)
+await vntez.auth.signIn({
+  redirectUri: 'https://yourapp.com/callback'
 });
 
-console.log('File key:', result.key);
-console.log('Public CDN URL:', result.location);
+// 2. Handle callback (on your callback page)
+const { accessToken, user } = await vntez.auth.handleCallback();
+console.log('User:', user.name, 'Roles:', user.roles);
+
+// 3. Check authentication status
+const token = vntez.auth.getToken(); // returns access token or null
+const currentUser = vntez.auth.getUser(); // returns user object or null
+const isAuth = vntez.auth.isAuthenticated(); // boolean
+
+// 4. Sign out
+vntez.auth.signOut('https://yourapp.com'); // redirect after logout
 ```
 
-### 1.2 Chunked Multipart Upload (> 10MB / Large Files)
+### 2. Remote Config (`vntez.config`)
 
-Automatically slices the file into 5MB chunks and uploads them concurrently with automatic retry and progress calculation:
-
-```typescript
-const largeVideo = fileInput.files![0]; // e.g. 500MB video
-
-const result = await vntez.r2.uploadMultipart(largeVideo, {
-  filename: largeVideo.name,
-  folder: 'videos',
-  partSize: 5 * 1024 * 1024, // 5MB per chunk (default)
-  concurrency: 3, // 3 parallel chunk uploads
-  onProgress: (p) => {
-    console.log(`Total Progress: ${p.percent}%`);
-  },
-  onPartComplete: ({ partNumber, totalParts }) => {
-    console.log(`Part ${partNumber}/${totalParts} finished`);
-  },
-});
-
-console.log('Video uploaded successfully:', result.location);
-```
-
-### 1.3 Smart Upload (`upload`)
-
-Automatically checks file size:
-- If `< 10MB`, uses `uploadSingle`.
-- If `>= 10MB`, automatically uses `uploadMultipart`.
+Dynamic configuration management.
 
 ```typescript
-const result = await vntez.r2.upload(file, {
-  filename: file.name,
-  folder: 'documents',
-  onProgress: (p) => console.log(`${p.percent}%`),
-});
-```
+// Get application configuration
+const config = await vntez.config.get<{
+  theme: string;
+  features: string[];
+}>();
 
-### 1.4 Presigned Download URL (Private Bucket)
-
-```typescript
-const { downloadUrl, expiresIn } = await vntez.r2.getDownloadUrl({
-  key: 'private/contracts/doc_01.pdf',
-  expiresIn: 3600, // Valid for 1 hour
-});
-
-window.open(downloadUrl, '_blank');
-```
-
----
-
-## 2. TeleBot Client (`vntez.telebot` or `createTeleBotClient`)
-
-### 2.1 Send Message
-
-```typescript
-await vntez.telebot.sendMessage(123456789, '<b>Đơn hàng mới #1024</b>', {
-  parse_mode: 'HTML',
-  buttons: [
-    [
-      { text: 'Xem chi tiết', url: 'https://vntez.com/orders/1024' },
-      { text: 'Hỗ trợ', callback_data: 'support_order_1024' },
-    ],
-  ],
-});
-```
-
-### 2.2 Send Photo with Caption
-
-```typescript
-await vntez.telebot.sendPhoto(123456789, 'https://cdn.vntez.com/invoice.png', {
-  caption: 'Hóa đơn thanh toán định kỳ',
-  parse_mode: 'HTML',
-});
-```
-
-### 2.3 Mass Broadcast
-
-#### Option A: Target Active Supabase Subscribers by Tag
-```typescript
-const report = await vntez.telebot.broadcast({
-  text: '🎉 <b>Thông báo VIP:</b> Khuyến mãi 50% bắt đầu!',
-  parse_mode: 'HTML',
-  tags: ['vip'], // Only active subscribers with tag 'vip'
-  status: 'active',
-});
-
-console.log(`Sent: ${report.success_count}, Failed: ${report.failure_count}`);
-```
-
-#### Option B: Target Explicit Chat IDs
-```typescript
-await vntez.telebot.broadcast({
-  text: '📢 Hệ thống bảo trì lúc 02:00',
-  chat_ids: [123456789, 987654321],
-});
-```
-
-### 2.4 Subscribers Management (Supabase)
-
-```typescript
-// 1. List subscribers with filter
-const { subscribers, total } = await vntez.telebot.subscribers.list({
-  status: 'active',
-  tag: 'vip',
-  limit: 20,
-});
-
-// 2. Get subscriber details
-const sub = await vntez.telebot.subscribers.get(123456789);
-
-// 3. Upsert subscriber
-await vntez.telebot.subscribers.upsert({
-  chat_id: 123456789,
-  email: 'customer@gmail.com',
-  username: 'alex_vn',
-  status: 'active',
-  tags: ['default', 'vip'],
-  metadata: { plan: 'pro' },
-});
-
-// 4. Update tags or metadata
-await vntez.telebot.subscribers.update(123456789, {
-  tags: ['default', 'vip', 'newsletter'],
-});
-
-// 5. Unsubscribe (soft delete)
-await vntez.telebot.subscribers.delete(123456789);
-
-// Or permanently delete:
-await vntez.telebot.subscribers.delete(123456789, { hard: true });
-```
-
-### 2.5 Telegram Authentication Verification
-
-#### Telegram Login Widget
-```typescript
-const verification = await vntez.telebot.auth.verifyWidget({
-  id: 123456789,
-  first_name: 'Nam',
-  username: 'hnamhocit',
-  auth_date: 1730910000,
-  hash: 'd41d8cd98f00b204e9800998ecf8427e...',
-});
-
-if (verification.valid) {
-  console.log('Telegram User Verified:', verification.user);
+if (config.enabled) {
+  console.log('Config:', config.config.theme);
+  console.log('Features:', config.config.features);
 }
 ```
 
-#### Telegram Mini App (TMA `initData`)
+### 3. File Upload (`vntez.upload`)
+
+Single and multipart file upload with R2 storage.
+
+#### Single File Upload
 ```typescript
-const result = await vntez.telebot.auth.validateInitData(window.Telegram.WebApp.initData);
-if (result.valid) {
-  console.log('Authenticated MiniApp user:', result.user);
+const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
+const file = fileInput?.files?.[0];
+
+if (file) {
+  const result = await vntez.upload.single(file, 'my-file.jpg');
+  console.log('Uploaded:', result.key, result.url);
 }
 ```
 
-### 2.6 Webhook Management
+#### Multipart Upload (Large Files)
 ```typescript
-// Inspect webhook status
-const info = await vntez.telebot.webhook.getInfo();
+// 1. Create multipart upload session
+const multipart = await vntez.upload.createMultipart(
+  'large-video.mp4',
+  'video/mp4',
+  1024 * 1024 * 100 // 100MB
+);
 
-// Set webhook URL
-await vntez.telebot.webhook.set('https://my-backend.com/webhook', 'secret-token');
+// 2. Upload parts (in parallel)
+const partResults = await Promise.all([
+  vntez.upload.uploadPart(multipart.uploadId, multipart.key, 1, chunk1),
+  vntez.upload.uploadPart(multipart.uploadId, multipart.key, 2, chunk2),
+  // ... more parts
+]);
 
-// Delete webhook
-await vntez.telebot.webhook.delete();
+// 3. Complete multipart upload
+const completeResult = await vntez.upload.completeMultipart(
+  multipart.uploadId,
+  multipart.key,
+  partResults.map(p => ({ partNumber: p.partNumber, etag: p.etag }))
+);
+
+console.log('Completed:', completeResult.url);
+```
+
+#### File Operations
+```typescript
+// Get file info
+const info = await vntez.upload.getInfo('uploads/avatar.jpg');
+console.log('File size:', info.size, 'Content type:', info.contentType);
+
+// Delete file
+const deleteResult = await vntez.upload.delete('uploads/avatar.jpg');
+if (deleteResult.success) {
+  console.log('File deleted');
+}
+
+// Abort multipart upload (if needed)
+await vntez.upload.abortMultipart(uploadId, key);
+```
+
+#### Uppy Companion Integration
+```typescript
+const uppyOptions = vntez.upload.getUppyCompanion();
+// Use with @uppy/aws-s3 or @uppy/xhr-upload
 ```
 
 ---
 
-## 3. IAM Auth Client (`vntez.auth`)
+## API Reference
 
-### 3.1 Sign In with PKCE Redirect
+### `VntezClient` Configuration
 ```typescript
-// Redirects user to VNTEZ IAM SSO login page
-await vntez.auth.signInWithRedirect();
+interface VntezClientConfig {
+  appId: string;                // Your application ID (required)
+  iamUrl?: string;             // IAM endpoint (default: 'https://vntez-iam.vercel.app')
+  uploadUrl?: string;          // Upload endpoint (default: 'https://upload.vntez.com')
+}
 ```
 
-### 3.2 Handle OAuth Callback
+### Authentication Types
 ```typescript
-// On /callback page:
-const { token, user } = await vntez.auth.handleCallback();
-console.log('Logged in as:', user.name, user.email);
-console.log('User roles:', user.roles);
-console.log('Permissions:', user.permissions);
+interface VntezUser {
+  id: string;
+  email: string;
+  name?: string;
+  avatar?: string;
+  roles: string[];
+  permissions: string[];
+  metadata?: Record<string, unknown>;
+}
+
+interface TokenResponse {
+  access_token: string;
+  token_type: string;
+  expires_in?: number;
+  refresh_token?: string;
+  scope?: string;
+}
 ```
 
-### 3.3 Sign Out
+### Upload Types
 ```typescript
-// Clears session and terminates IAM SSO
-await vntez.auth.signOut({ redirectUrl: window.location.origin });
+interface SingleUploadResponse {
+  success: boolean;
+  key: string;
+  url: string;
+}
+
+interface FileInfo {
+  key: string;
+  size: number;
+  contentType: string;
+  lastModified: string;
+  etag: string;
+  metadata?: Record<string, unknown>;
+}
+```
+
+---
+
+## Zero-Dependency Architecture
+
+This SDK uses only native browser/Node.js APIs:
+- **Crypto**: `crypto.subtle`, `crypto.getRandomValues`
+- **HTTP**: `fetch`, `FormData`
+- **Storage**: `sessionStorage`, `localStorage` (browser only)
+
+No external dependencies required!
+
+---
+
+## Browser Compatibility
+
+- **Modern Browsers**: Chrome 61+, Firefox 60+, Safari 11+, Edge 79+
+- **Node.js**: 18+ (with fetch API support)
+- **Cloudflare Workers**: Fully compatible
+- **Bun**: Fully compatible
+
+---
+
+## Development
+
+```bash
+# Install dependencies
+npm install
+
+# Type checking
+npm run typecheck
+
+# Build for production
+npm run build
+
+# Development watch mode
+npm run dev
 ```
 
 ---
