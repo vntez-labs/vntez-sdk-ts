@@ -1,0 +1,32 @@
+# Source files
+src/
+tests/
+examples/
+
+# Development files
+tsconfig.json
+.gitignore
+.npmignore
+bun.lock
+node_modules/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db

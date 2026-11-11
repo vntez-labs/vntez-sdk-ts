@@ -1,7 +1,7 @@
 {
   "name": "@vntez/sdk",
   "version": "0.1.0",
-  "description": "TypeScript SDK for VNTEZ Platform",
+  "description": "Zero-dependency TypeScript SDK for VNTEZ Platform - OAuth2 PKCE, R2 Upload, Remote Config",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -18,20 +18,44 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE",
+    "README.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm,iife --global-name Vntez --dts --clean",
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "vntez",
     "sdk",
-    "api-client"
+    "oauth2",
+    "pkce",
+    "upload",
+    "r2",
+    "typescript",
+    "client",
+    "api-client",
+    "zero-dependency"
   ],
-  "author": "Your Name",
+  "author": "Hoàng Nam <hnamhocit@gmail.com>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vntez-labs/vntez-sdk-ts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vntez-labs/vntez-sdk-ts/issues"
+  },
+  "homepage": "https://github.com/vntez-labs/vntez-sdk-ts#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {},
   "devDependencies": {
     "tsup": "^9.0.0",
